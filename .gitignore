@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+venv/
+.venv/
+env/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# ML artifacts
+*.pt
+*.pth
+*.onnx
+*.bin
+*.h5
+*.pkl
+*.joblib
+model_weights/
+checkpoints/
+
+# Data (large files)
+*.csv
+*.parquet
+*.arrow
+!data-pipeline/kafka/schemas/*.avsc
+
+# Docker
+docker-compose.override.yml
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!infra/terraform/*.tf
+
+# K8s secrets
+*-secret.yaml
+*-secrets.yaml
+
+# Logs
+*.log
+logs/
