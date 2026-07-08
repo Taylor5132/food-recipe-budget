@@ -435,6 +435,77 @@ Kafka (클러스터)
 
 **폴백 옵션 (기록용):** VictoriaMetrics + Loki + Grafana + **Alloy** 조합 — [[project_monitoring_stack]]에서 운영 경험 있음. 리소스가 빡빡하면 VM(메모리 효율 Prometheus 대체)+Alloy(경량 수집기)로 전환 가능.
 
+## §6.7 기술 스택 (확정)
+
+**단일 언어(Python) 백엔드: FastAPI API + ML + 데이터 파이프라인 — 폴리글랏 세금 없음**
+
+| 레이어 | 스택 |
+|---|---|
+| **Frontend** | React + Vite + TypeScript, PWA(반응형·카메라), TanStack Query + Zustand, Tailwind |
+| **Backend API (Python)** | **FastAPI** — gateway, user/pantry/recipe/price/meal-plan. 인증=**PyJWT + FastAPI 의존성**(Kakao OAuth2 + 자체 JWT), **SQLAlchemy+Alembic**(PG), **confluent-kafka**, **Pydantic**(스키마) |
+| **ML 서빙 (Python)** | **FastAPI** 통합 pod, 모델별 endpoint. **API와 동일 언어 → 모델·전처리 코드 공유(경계 없음)** |
+| **데이터 파이프라인 (Python)** | 크롤러/폴러/컨슈머 (confluent-kafka), 재료 NER·가격정규화 |
+| **저장소** | **PostgreSQL**(OLTP, CloudNativePG) + **ClickHouse**(OLAP 가격시계열·시세예측 피처, Altinity operator) + **Elasticsearch**(레시피검색) + **Redis**(가격캐시·세션) |
+| **메시징** | **Kafka**(Strimzi operator) + **KEDA**(consumer lag 오토스케일) |
+| **ML 학습** | CRF(sklearn-crfsuite, NER)·XGBoost(신선도)·LightGBM(랭킹·**시세예측 회귀**) — Python, **전부 CPU**. **Argo Workflows**(재학습) + **MLflow**(실험관리) |
+| **Infra** | **kubeadm** on AWS · **Terraform** · **GitHub Actions + ECR + ArgoCD**(GitOps) · **Prometheus+Grafana+Loki+Tempo** · Docker |
+| **External** | data.go.kr(도매시장 B552845·KAMIS·식품회수·기상청) · 식약처 COOKRCP01 · YouTube Data API · Naver Clova OCR · Kakao 로그인 |
+
+→ **인프라 상세(컨테이너화·클러스터·클라우드)는 §6.8 (Docker / Kubernetes / AWS)로 분리 기록**
+
+**단일 언어의 이점 (FastAPI 선택):**
+- API·ML·파이프라인 전부 Python → 모델·재료사전·스키마·ClickHouse 쿼리 **코드 공유**, Java↔Python 경계·직렬화 홉 없음
+- 공유 데이터: Kafka 토픽 + ClickHouse를 전 컴포넌트가 **동일 언어 클라이언트**로 접근
+- 트레이드오프(포기한 것): Java-Spring 취업신호 · Spring Security 성숙도 → 팀 판단으로 FastAPI 선택
+
+## §6.8 인프라 스택 (Docker / Kubernetes / AWS)
+
+> 범례: **✅**=확정/필수 · **(표준)**=관행상 채택 제안(이견 없으면 확정) · **🟡**=보류/미정 · **⬜**=선택
+> **원칙: Docker·Kubernetes 계층 = 클라우드 무관 (로컬 kubeadm 개발 1-6주, AWS 안 씀). AWS = 별도 계층 (마이그레이션 7-9주).**
+
+### 🐳 Docker (컨테이너화 — 클라우드 무관)
+- **전 서비스 멀티스테이지 빌드** ✅
+  - 프론트: node 빌드 → **nginx:alpine 정적 서빙** (SPA 폴백 `try_files → index.html`, 정적자산 장기캐시). non-root=`nginxinc/nginx-unprivileged`
+  - Python(API/ML/파이프라인): builder(의존성) → slim 런타임
+- nginx = **프론트 정적 서빙 전용** (라우팅 아님)
+- 이미지 스캔: **Trivy** (CI) ✅
+- 레지스트리(개발): **Harbor** ✅ (UI + 취약점스캔 + 이미지 서명; 프로덕션은 AWS ECR)
+
+### ☸️ Kubernetes (클러스터/플랫폼 — 클라우드 무관, 로컬 kubeadm)
+- 배포: **kubeadm** full cluster (관리형 EKS 아님) ✅
+- **CNI + 서비스 메쉬: 🟡 보류** — Cilium(eBPF·사이드카리스, 유저 경험有 → 유력) vs Calico+Linkerd
+- 엣지: **K8s Gateway API 채택** ✅ / 구현체 **🟡 미정** (Cilium Gateway / Envoy Gateway / Traefik — CNI에 연동)
+- 앱 게이트웨이: **FastAPI Gateway 서비스** ✅ (엣지 Gateway API → `/api` → FastAPI Gateway가 라우팅 + JWT 검증)
+- 오토스케일(파드): **HPA + KEDA**(Kafka lag) + **metrics-server + Prometheus Adapter** ✅
+- operator: **Strimzi**(Kafka)·**CloudNativePG**(PG)·**Altinity**(ClickHouse) ✅
+- 인증서: **cert-manager** ✅ / 파드보안: **PSA**(restricted) ✅ + **NetworkPolicy**(CNI 제공, CNI 확정 후)
+- GitOps: **ArgoCD** ✅ / ML 파이프라인: **Argo Workflows** ✅
+- 관측: **kube-prometheus-stack + Loki + Tempo + OpenTelemetry** ✅ (Cilium이면 +Hubble)
+- 클러스터 DNS: **CoreDNS**(내장) ✅
+- 스토리지(개발): **local-path-provisioner** ✅ / LB(개발): **MetalLB** ✅ → AWS 단계에 EBS CSI·NLB(CCM)로 교체
+- 시크릿(개발): **Sealed Secrets** ✅ (암호화 Git 커밋; AWS는 ESO+Secrets Manager)
+- 정책: **Kyverno** ⬜ / 백업: **Velero** ⬜ (백엔드 S3=AWS)
+
+### ☁️ AWS (클라우드 — 마이그레이션 7-9주, 로컬 kubeadm을 AWS로 이전. 개발 중엔 미사용)
+- 컴퓨트: **EC2** (master+worker, worker=Spot) ✅
+- CCM: **AWS Cloud Controller Manager** ✅ (K8s LoadBalancer → NLB, 노드 lifecycle)
+- 노드 오토스케일: **Karpenter** ✅ (EC2 직접 프로비저닝)
+- 네트워크: **NLB**(Gateway API 앞단) + VPC ✅
+- 블록스토리지: **EBS**(gp3) + **EBS CSI Driver** ✅ (개발 local-path 대체)
+- 오브젝트: **S3** (ML아티팩트/MLflow · 데이터레이크) ✅
+- 레지스트리: **ECR** ✅ (개발 Harbor 대체)
+- 시크릿: **External Secrets Operator + AWS Secrets Manager** ✅ (개발=Sealed Secrets)
+- DNS: **Route53 + ExternalDNS** ✅
+- 파드 AWS 권한: **IRSA** ✅ (OIDC 자가호스팅, 파드별 최소권한; kubeadm은 OIDC 프로바이더 직접 셋업 필요=고급). *Karpenter·ESO·S3 접근*
+- IaC: **Terraform** ✅ / CI/CD: **GitHub Actions** ✅ (→ ECR → ArgoCD sync)
+
+**마이그레이션 스왑 (로컬→AWS, 7주차 — 이 스왑 자체가 캡스톤 마이그레이션 서사):**
+Harbor→ECR · local-path→EBS CSI · MetalLB→NLB(CCM) · (노드오토스케일 없음)→Karpenter · Sealed Secrets→ESO+Secrets Manager · +ExternalDNS/Route53
+
+**✅ 스택 확정 (거의 완료):** FastAPI Gateway · IRSA · GitHub Actions+ArgoCD+Argo Workflows+MLflow · operator(Strimzi/CNPG/Altinity) · Sealed Secrets·local-path·MetalLB(개발) · KEDA·metrics-server·cert-manager·Trivy·PSA·OpenTelemetry · ECR·S3·Route53·ExternalDNS·Terraform · 프론트/백엔드/ML 라이브러리(§6.7)
+**남은 결정 (🟡, 보류):** ① CNI+메쉬(Cilium 유력) ② Gateway API 구현체(①연동) · Kyverno·Velero(선택)
+> ⚠️ 미확정 항목은 **사용자 승인 전까지 기록 금지** — 표준값 자동완성 금지.
+
 ## §7. 인프라 & 비용 (학생 예산)
 
 ### 학습 환경
@@ -516,3 +587,10 @@ Redis:                         $13/월   (ElastiCache) 또는 셀프호스트 $0
 | 2026-07-08 | **네이버 쇼핑 검색 API 2026-07-31 종료(사용자 제보) → 가공식품 가격 전략 재구성** | 참가격+네이버 연쇄 죽음 = 가공식품 시장가격 합법소스 부재 확정. **전략 전환: 가격 지능=신선식품(KAMIS/전국시장) 올인**(변동↑·예측가치↑·합법). 가공식품은 유저 영수증 OCR(본인데이터)로 개인추적, 시장비교 포기. 카카오쇼핑 API는 확인 대기(사용자: 나중에) |
 | 2026-07-08 | **★ 키 활성 확정 + HERO/#9근간 실검증 완료 (최대 리스크 종결)** | 정식 일반인증키로 `B552845/perDay/price`=200 정상+실가격(쌀 서울 중도매 59,400원, 전체필드), `katRealTime2/trades2`=200 정상. 초기 401은 전파대기/파라미터(saleDate 대신 `cond[]` DSL) 문제였음. **HERO 전국32시장 살아있음+인증됨(참가격과 정반대), #9 신선식품 근간 실데이터 확정.** 파라미터 문법=`cond[fld::EQ/LTE/GTE]=값`+returnType+selectable |
 | 2026-07-08 | **레시피 소스 검증예정 목록화 + 영상추출 MVP=YouTube만 확정** | 레시피: 식약처(실키 언블락) → 농교원(mafra)/농식품올바로 후속. 영상 URL→재료추출: MVP는 **YouTube 설명란(Data API)→NER**만, 틱톡/릴스 후속. 합법 가드레일=유저 건별·개인용·비저장(대량크롤 저장 금지). #2 확장, NER 재사용 |
+| 2026-07-09 | **기술 스택 확정(§6.7): FastAPI(Python) 단일언어 백엔드 + PostgreSQL+ClickHouse** (07-08 Spring 선택→재검토 후 변경) | 이유=프로젝트가 ML/데이터 중심(전부 Python)이라 단일언어가 Java↔Python 경계를 통째 제거, 9주 5인에 유리. 포기=Java 취업신호·Spring Security 성숙도. 저장소=PG(OLTP)+ClickHouse(가격시계열/시세예측). operator 4종(Strimzi/CNPG/Altinity/KEDA) 재사용 |
+| 2026-07-08 | **Docker=전 서비스 멀티스테이지(프론트 nginx:alpine), 엣지=K8s Gateway API 채택** | 프론트 nginx는 정적 서빙만. K8s Gateway API(Ingress 대체 최신표준)=엣지 인프라 쇼케이스. **구현체(Envoy/Traefik)·앱 게이트웨이 방식은 미정** — 사용자 결정 대기 (이전에 임의 확정했다가 정정) |
+| 2026-07-09 | **인프라 스택 Docker/K8s/AWS 3계층 분리 기록(§6.8). Karpenter·External Secrets+Secrets Manager 확정** | AskUserQuestion으로 노드오토스케일=Karpenter, 시크릿=ESO+Secrets Manager 확정. **CNI+메쉬 보류**(Cilium eBPF/사이드카리스 유력 — 유저 경험有 — vs Calico+Linkerd). Gateway API 구현체·앱게이트웨이·파드AWS권한(IRSA)은 미정. 표준항목(cert-manager/Trivy/PSA/OTel/ExternalDNS/S3)은 이견없으면 확정 |
+| 2026-07-09 | **인프라 3계층 원칙 정정: Docker·K8s=클라우드 무관(로컬 개발, AWS 미사용) / AWS=별도 계층(마이그레이션)** | AWS결합 항목(ECR·EBS CSI·CCM·Karpenter·S3·Secrets Manager·Route53·ESO·ExternalDNS·IRSA)을 전부 AWS 계층으로 이동. K8s는 클라우드 무관 컴포넌트만(로컬은 local-path·NodePort 등, 7주차 마이그레이션 스왑). "로컬→AWS 스왑" 자체가 캡스톤 서사 |
+| 2026-07-09 | 개발 레지스트리=**Harbor** 확정. **미확정 스택 전부 사용자 확인 후 기록 원칙 강화** | 사용자 지시: 명시 확정 외 미정 스택 다 물어보고 기록, 표준값 자동완성 금지(로컬레지스트리 임의기입 정정). 남은결정 ①~⑩ 순차 진행 |
+| 2026-07-09 | **배치2 확정: 앱게이트웨이=FastAPI Gateway · 파드권한=IRSA · CI/CD/ML=(GitHub Actions/ArgoCD/Argo Workflows/MLflow) · operator=전용(Strimzi/CNPG/Altinity) · 개발시크릿=Sealed Secrets · 개발스토리지·LB=local-path+MetalLB** | CNI+메쉬·Gateway API 구현체 보류 유지. 표준 애드온(KEDA/metrics/cert-manager/Trivy/PSA/OTel/ExternalDNS/Terraform/ECR/S3/Route53)+라이브러리는 승인 목록 제시 후 기록 |
+| 2026-07-09 | **배치3 승인: 표준 애드온 + AWS기본 + 프론트/백엔드/ML 라이브러리 확정. 시세예측=LightGBM 회귀** | KEDA/metrics/cert-manager/Trivy/PSA/OTel + ECR/S3/Route53+ExternalDNS/Terraform + Vite/TS/TanStack Query/Zustand/Tailwind + SQLAlchemy+Alembic/PyJWT/confluent-kafka/Pydantic/sklearn-crfsuite/XGBoost/LightGBM. **Kyverno·Velero 보류(선택).** 기술스택 거의 완료 — CNI+메쉬·Gateway API 구현체만 보류 |

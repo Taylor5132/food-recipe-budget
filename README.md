@@ -12,6 +12,25 @@
 - **Auth** — Kakao 소셜 + 자체 이메일/비번, 로그인 성공점에서 자체 JWT 통일
 - **Infra** — kubeadm full K8s on AWS / Docker / Terraform / ArgoCD(GitOps) / Prometheus+Grafana+Loki+Tempo
 
+## 기술 스택 (확정)
+
+**단일 언어(Python) 백엔드: FastAPI API + ML + 데이터 파이프라인** (폴리글랏 세금 없음)
+
+| 레이어 | 스택 |
+|---|---|
+| Frontend | React + Vite + TypeScript, PWA, TanStack Query·Zustand, Tailwind |
+| Backend API | **FastAPI** (FastAPI Gateway, PyJWT, SQLAlchemy+Alembic, confluent-kafka, Pydantic) |
+| ML 서빙 | **FastAPI** 통합 pod (API와 동일 언어 → 코드 공유) |
+| 데이터 파이프라인 | **Python** (confluent-kafka 크롤러/폴러/컨슈머) |
+| 저장소 | **PostgreSQL**(OLTP) + **ClickHouse**(가격 시계열·시세예측) + Elasticsearch(레시피) + Redis |
+| ML | CRF(sklearn-crfsuite)·XGBoost·LightGBM(시세예측 회귀) — 전부 CPU / Argo Workflows + MLflow |
+| 🐳 Docker | 멀티스테이지, 프론트 nginx:alpine, Trivy, **Harbor**(개발 레지스트리) |
+| ☸️ Kubernetes (클라우드 무관) | kubeadm · FastAPI Gateway · HPA+KEDA · Strimzi/CNPG/Altinity · cert-manager · ArgoCD+Argo Workflows · kube-prometheus+Loki+Tempo+OTel · Sealed Secrets·local-path·MetalLB(개발) |
+| ☁️ AWS (마이그레이션) | EC2 · CCM · Karpenter · NLB · EBS · S3 · ECR · ESO+Secrets Manager · Route53+ExternalDNS · IRSA · Terraform · GitHub Actions |
+| 🟡 보류 | CNI+메쉬(Cilium 유력) · Gateway API 구현체 · Kyverno·Velero |
+
+> 원칙: Docker·K8s = 클라우드 무관(로컬 kubeadm 개발) / AWS = 마이그레이션 계층. 상세 = `docs/design.md` §6.7–6.8
+
 ## 프로젝트 구조
 
 ```
