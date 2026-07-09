@@ -34,5 +34,6 @@ Kafka(Strimzi) + KEDA. kubeadm on AWS, Terraform, GitHub Actions+ECR+ArgoCD, LGT
 - 설계 결정: 숫자+근거로 종이 위에서. 실인프라 테스트 제안 X.
 
 ## 미정 (사용자 결정 대기 — 임의로 정하지 말 것)
-- Gateway API 구현체(Envoy Gateway / Traefik / …) + 앱 게이트웨이 방식(FastAPI Gateway vs Gateway API 직접)
+- CNI + 서비스 메쉬 (Cilium 유력, 보류)
+- Gateway API 구현체 (Cilium Gateway / Envoy Gateway / Traefik — CNI에 연동)
 - 5인 역할분담 + 9주 타임라인

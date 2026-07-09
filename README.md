@@ -51,8 +51,8 @@ food-cooking-app/
 │   ├── recipe-ranker/         # [P1] 레시피 랭킹 (LightGBM)
 │   └── food-classifier/       # [P1/보류] 식재료 이미지 분류 (원재료 데이터 부족)
 ├── data-pipeline/             # Kafka 데이터 파이프라인
-│   ├── crawlers/              # KOGL 향토음식(벌크) / 위키 EventStreams(폴백)
-│   ├── pollers/               # 32시장 실시간경매, NEIS, KAMIS, 참가격, 온라인가격, 식품회수, 기상청
+│   ├── crawlers/              # KOGL 향토음식(벌크)
+│   ├── pollers/               # 32시장 실시간경매, KAMIS, 식품회수(P1), 기상청(P1), 온라인가격(P1)
 │   └── kafka/                 # 토픽 설정, Avro 스키마
 └── infra/                     # 인프라 코드
     ├── k8s/
